@@ -1,6 +1,6 @@
 import os, sys
 from basic_values import *
-from dm_img_blend_lib import dm_img_blend_lib
+from dm_img_blend_lib import dm_img_blend_lib, ct, DM_IMG_BLEND_RETURN_OK
 from PyQt4 import QtCore, QtGui
 import Queue
 import numpy as np
@@ -134,6 +134,8 @@ class DmPixmapItem(QtGui.QGraphicsPixmapItem):
         self.mat_id = mat_id
         self.x_index = tile_x_index
         self.y_index = tile_y_index
+        self.pos_x = tile_pos_x
+        self.pos_y = tile_pos_y
         self.width = tile_width
         self.height = tile_height
         self.offset_x = 0.
@@ -144,6 +146,11 @@ class DmPixmapItem(QtGui.QGraphicsPixmapItem):
     def boundingRect(self):
         return QtCore.QRectF(0., 0., self.width, self.height)
         pass
+
+    def shape(self):
+        path = QtGui.QPainterPath()
+        path.addRect(self.boundingRect())
+        return path
 
     def setBlendingDoneFlag(self):
         self.IsBlendingDone = True
@@ -621,35 +628,35 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
         items_in_view = self.items(0, 0, \
                     self.viewport().size().width(), \
                     self.viewport().size().height())
-        item_count = 0
+        items_to_process = []
         for item in items_in_view:
             if item.type() != DM_PIXMAP_USERTYPE:
                 continue # jump to next iteration
             elif (item.mat_id, item.x_index, item.y_index) \
                     not in self.items_to_blend:
                 return
-            item_count += 1
+            items_to_process.append(item)
             pass
-        if 0==item_count:
+        if not items_to_process:
             return
         # perform blending
         r = self.blender.doBlending(blend_width = 16, use_blender = 1, \
                                 try_gpu = 0)
-        if DM_IMG_PROC_RETURN_OK!=r:
+        if DM_IMG_BLEND_RETURN_OK!=r:
             return
         # output images
         for i in range(len(self.items_to_blend)):
             img_index = i # img_index start from zero
             # get image size
             r, out_width, out_height = self.blender.outputDimension(img_index)
-            if DM_IMG_PROC_RETURN_OK!=r:
+            if DM_IMG_BLEND_RETURN_OK!=r:
                 return
             # create buffer
             out_img = np.zeros([out_height, out_width, 3], np.ubyte)
             # copy image data from blender
             out_ptr = out_img.ctypes.data_as(ct.POINTER(ct.c_ubyte))
             r = self.blender.outputBlendedImage(out_ptr, img_index)
-            if DM_IMG_PROC_RETURN_OK!=r:
+            if DM_IMG_BLEND_RETURN_OK!=r:
                 return
             # insert into cache
             out_qimage = QtGui.QImage(out_img, out_width, out_height, \
@@ -661,7 +668,7 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
             QtGui.QPixmapCache.insert(str(out_tile_info), out_qpixmap)
             pass
         # eset flags of blended tile items
-        for item in items_in_view:
+        for item in items_to_process:
             item.setBlendingDoneFlag()
             pass
         # clear self.items_to_blend
@@ -669,7 +676,7 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
             self.items_to_blend.pop()
             pass
         # update blended tile items
-        for item in items_in_view:
+        for item in items_to_process:
             item.update(item.boundingRect())
             pass
         pass
@@ -686,6 +693,8 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
                 if not self.items_to_blend:
                     self.blender.clearAll()
                 # register tile image into blender
+                tile_image = tile_image.convertToFormat( \
+                                    QtGui.QImage.Format_RGB888)
                 sip_ptr = tile_image.constBits()
                 c_void_pointer = ct.c_void_p(sip_ptr.__int__())
                 r = self.blender.addNewImage(data_ptr = c_void_pointer, \
@@ -697,7 +706,7 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
                                          tile_pos_y = tile_item.pos_y, \
                                          tile_width = tile_item.width, \
                                          tile_height = tile_item.height)
-                if DM_IMG_PROC_RETURN_OK!=r:
+                if DM_IMG_BLEND_RETURN_OK!=r:
                     return
                 self.items_to_blend.append( (mat_id, x_index, y_index) )
                 # blender post process
