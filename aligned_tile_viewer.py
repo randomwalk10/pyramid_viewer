@@ -223,6 +223,7 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
         self.blender = dm_img_blend_lib(useOpenCL = 0)
         self.blender.clearAll()
         self.items_to_blend = [] #(mat_id, index_x, index_y)
+        self.prev_items_to_blend = [] #(mat_id, index_x, index_y)
         pass
 
     def initializeImageReviewSpace(self):
@@ -579,38 +580,46 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
             pass
         if not items_to_process:
             return
-        # perform blending
-        r = self.blender.doBlending(blend_width = 16, use_blender = 1, \
-                                try_gpu = 0)
-        if DM_IMG_BLEND_RETURN_OK!=r:
-            return
-        # output images
-        for i in range(len(self.items_to_blend)):
-            img_index = i # img_index start from zero
-            # get image size
-            r, out_width, out_height = self.blender.outputDimension(img_index)
-            if DM_IMG_BLEND_RETURN_OK!=r:
-                return
-            # create buffer
-            out_img = np.zeros([out_height, out_width, 3], np.ubyte)
-            # copy image data from blender
-            out_ptr = out_img.ctypes.data_as(ct.POINTER(ct.c_ubyte))
-            r = self.blender.outputBlendedImage(out_ptr, img_index)
-            if DM_IMG_BLEND_RETURN_OK!=r:
-                return
-            # insert into cache
-            out_qimage = QtGui.QImage(out_img, out_width, out_height, \
-                                QtGui.QImage.Format_RGB888)
-            out_qpixmap = QtGui.QPixmap.fromImage(out_qimage)
-            out_mat_id, out_x_index, out_y_index = \
-                self.items_to_blend[i]
-            out_tile_info = (out_mat_id, out_x_index, out_y_index, 1)
-            QtGui.QPixmapCache.insert(str(out_tile_info), out_qpixmap)
+        # check if blending is needed
+        if self.prev_items_to_blend and \
+                ( set(self.prev_items_to_blend)>=set(self.items_to_blend) ):
             pass
-        # eset flags of blended tile items
+        else:
+            # perform blending
+            r = self.blender.doBlending(blend_width = 16, use_blender = 1, \
+                                    try_gpu = 0)
+            if DM_IMG_BLEND_RETURN_OK!=r:
+                return
+            # output images
+            for i in range(len(self.items_to_blend)):
+                img_index = i # img_index start from zero
+                # get image size
+                r, out_width, out_height = self.blender.outputDimension(img_index)
+                if DM_IMG_BLEND_RETURN_OK!=r:
+                    return
+                # create buffer
+                out_img = np.zeros([out_height, out_width, 3], np.ubyte)
+                # copy image data from blender
+                out_ptr = out_img.ctypes.data_as(ct.POINTER(ct.c_ubyte))
+                r = self.blender.outputBlendedImage(out_ptr, img_index)
+                if DM_IMG_BLEND_RETURN_OK!=r:
+                    return
+                # insert into cache
+                out_qimage = QtGui.QImage(out_img, out_width, out_height, \
+                                    QtGui.QImage.Format_RGB888)
+                out_qpixmap = QtGui.QPixmap.fromImage(out_qimage)
+                out_mat_id, out_x_index, out_y_index = \
+                    self.items_to_blend[i]
+                out_tile_info = (out_mat_id, out_x_index, out_y_index, 1)
+                QtGui.QPixmapCache.insert(str(out_tile_info), out_qpixmap)
+                pass
+            pass
+        # set flags of blended tile items
         for item in items_to_process:
             item.setBlendingDoneFlag()
             pass
+        # update self.prev_items_to_blend
+        self.prev_items_to_blend = list(self.items_to_blend)
         # clear self.items_to_blend
         while self.items_to_blend:
             self.items_to_blend.pop()
