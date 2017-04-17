@@ -582,7 +582,7 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
             return
         # check if blending is needed
         if self.prev_items_to_blend and \
-                ( set(self.prev_items_to_blend)>=set(self.items_to_blend) ):
+            ( set(self.items_to_blend).issubset(self.prev_items_to_blend) ):
             pass
         else:
             # perform blending
