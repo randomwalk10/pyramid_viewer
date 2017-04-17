@@ -38,59 +38,6 @@ class DmThreadLoadAllImages(QtCore.QThread):
             except Queue.Empty:
                 pass
 
-    # def run(self):
-    #   while( not self.exitFlag):
-    #       try:
-    #           tile_info = self.img_load_queue.get(False, 0.5)
-    #           path_to_tile = self.returnTilePath(tile_info[0], tile_info[1], 1)
-    #           if os.path.exists(path_to_tile):
-    #               if(1>=tile_info[2]):
-    #                   tile_image = QtGui.QImage(path_to_tile)
-    #                   self.signal_sendImageToGUI.emit(tile_info, tile_image)
-    #               else:
-    #                   # np_array = cv2.imread(path_to_tile, cv2.IMREAD_UNCHANGED)
-    #                   # # tile_image = self.generatePyramidImage(np_array, tile_info[2])
-    #                   # np_array = self.generatePyramidImage(np_array, tile_info[2])
-    #                   # # np_array = cv2.cvtColor(np_array, cv2.COLOR_BGR2RGB)
-    #                   # # self.signal_sendImageToGUI.emit(tile_info, np_array)
-
-    #                   # path_to_pyramid_tile = self.returnTilePath(*tile_info)
-    #                   # if not os.path.exists(self.image_dir+os.path.sep+'pyramid'):
-    #                   #   os.makedirs(self.image_dir+os.path.sep+'pyramid')
-    #                   # cv2.imwrite(path_to_pyramid_tile, np_array)
-    #                   # tile_image = QtGui.QImage(path_to_pyramid_tile)
-    #                   # # print tile_image.size()/2
-    #                   # self.signal_sendImageToGUI.emit(tile_info, tile_image)
-
-    #                   # # np_array = cv2.cvtColor(np_array, cv2.COLOR_BGR2RGB)
-    #                   # # img_width = np_array.shape[1]
-    #                   # # img_height = np_array.shape[0]
-    #                   # # tile_image = QtGui.QImage(np_array, img_width, img_height, QtGui.QImage.Format_RGB888)
-    #                   # # tile_image_copy = tile_image.copy(tile_image.rect())
-    #                   # # self.signal_sendImageToGUI.emit(tile_info, tile_image_copy)
-
-    #                   # check if prev level images is in qpixmapcache
-    #                   pyramid_level = tile_info[2]
-    #                   temp_level = pyramid_level/2
-    #                   pixmap = QtGui.QPixmap()
-    #                   while not QtGui.QPixmapCache.find(str((tile_info[0], tile_info[1], temp_level)), pixmap):
-    #                       temp_level /= 2
-    #                       if(temp_level<1):
-    #                           break
-    #                   if(temp_level<1):
-    #                       tile_image = QtGui.QImage(path_to_tile)
-    #                       temp_level = 1
-    #                       pass
-    #                   else:
-    #                       tile_image = pixmap.toImage()
-    #                       pass
-    #                   while(temp_level<pyramid_level):
-    #                       tile_image = tile_image.scaled(tile_image.size()/2)
-    #                       temp_level*=2
-    #                   self.signal_sendImageToGUI.emit(tile_info, tile_image)
-    #       except Queue.Empty:
-    #           pass
-
     def returnTilePath(self, mat_id, x_index, y_index, pyramid_level):
         if(1>=pyramid_level):
             path_to_return = self.image_dir+os.path.sep+'tile_%d_%d_%d.bmp'%(mat_id, x_index, y_index)
@@ -104,13 +51,6 @@ class DmThreadLoadAllImages(QtCore.QThread):
         while(temp < pyramid_level):
             np_array = cv2.pyrDown(np_array)
             temp*=2
-        # np_array = cv2.cvtColor(np_array, cv2.COLOR_BGR2RGB)
-        # img_width = np_array.shape[1]
-        # img_height = np_array.shape[0]
-        # # print img_width, img_height
-        # tile_image = QtGui.QImage(np_array, img_width, img_height, QtGui.QImage.Format_RGB888)
-        # return tile_image
-
         return np_array
 
     def scheduleStop(self):
