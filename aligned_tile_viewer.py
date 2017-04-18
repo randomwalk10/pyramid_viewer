@@ -6,6 +6,7 @@ import Queue
 import numpy as np
 import glob
 import cv2
+import time
 # define constant values
 DM_BACKGROUND_GRID_SIZE = 10
 
@@ -56,10 +57,157 @@ class DmThreadLoadAllImages(QtCore.QThread):
     def scheduleStop(self):
         self.exitFlag = True
 
+class DmThreadImageBlender(QtCore.QThread):
+
+    """Docstring for DmThreadImageBlender. """
+    signal_sendImageToGUI = QtCore.pyqtSignal(tuple, QtGui.QImage)
+
+    def __init__(self, img_blend_queue, image_dir):
+        """initialized thread for image blender
+
+        :img_blend_queue: TODO
+        :image_dir: TODO
+
+        """
+        super(DmThreadImageBlender, self).__init__()
+
+        self._img_blend_queue = img_blend_queue
+        self._image_dir = image_dir
+        self.exitFlag = False
+        self.tiles_to_blend = []
+        self.semaphore_timer = QtCore.QSemaphore(1)
+        self.update_timer = QtCore.QBasicTimer()
+        self.update_timer.start(1000, self)
+        self.blender = dm_img_blend_lib(useOpenCL = 0)
+        self.blender.clearAll()
+        self.prev_time = time.time()
+        pass
+
+    def __del__(self):
+        self.wait()
+
+    def timerEvent(self, event):
+        """TODO: Docstring for timerEvent.
+
+        :event: TODO
+        :returns: TODO
+
+        """
+        if True==self.semaphore_timer.tryAcquire():
+            # check if blending is needed
+            # if yes, perform blending
+            if len(self.tiles_to_blend)>1:
+                self.performBlending()
+                pass
+            # release semaphore
+            self.semaphore_timer.release()
+            pass
+        pass
+
+    def performBlending(self):
+        """TODO: Docstring for performBlending.
+        :returns: TODO
+
+        """
+        # perform blending
+        r = self.blender.doBlending(blend_width = 16, use_blender = 1, \
+                                try_gpu = 0)
+        if DM_IMG_BLEND_RETURN_OK!=r:
+            return
+        # output images
+        for i in range(len(self.tiles_to_blend)):
+            img_index = i # img_index start from zero
+            # get image size
+            r, out_width, out_height = self.blender.outputDimension(img_index)
+            if DM_IMG_BLEND_RETURN_OK!=r:
+                return
+            # create buffer
+            out_img = np.zeros([out_height, out_width, 3], np.ubyte)
+            # copy image data from blender
+            out_ptr = out_img.ctypes.data_as(ct.POINTER(ct.c_ubyte))
+            r = self.blender.outputBlendedImage(out_ptr, img_index)
+            if DM_IMG_BLEND_RETURN_OK!=r:
+                return
+            # insert into cache
+            out_qimage = QtGui.QImage(out_img, out_width, out_height, \
+                                QtGui.QImage.Format_RGB888)
+            out_mat_id, out_x_index, out_y_index = \
+                self.tiles_to_blend[i]
+            out_tile_info = (out_mat_id, out_x_index, out_y_index, 0)
+            self.signal_sendImageToGUI.emit(out_tile_info, out_qimage)
+            pass
+        #reset tiles_to_blend and clear blender
+        while self.tiles_to_blend:
+            self.tiles_to_blend.pop()
+            pass
+        self.blender.clearAll()
+        pass
+
+    def run(self):
+        """thread runs
+        :returns: None
+
+        """
+        while( not self.exitFlag):
+            try:
+                blend_info = self._img_blend_queue.get(False, 0.5)
+                mat_id, x_index, y_index, crop_offset_x, crop_offset_y, \
+                    tile_pos_x, tile_pos_y, tile_width, tile_height = \
+                    blend_info
+                tile_info = mat_id, x_index, y_index
+                # check if new tile is already here
+                # if not add new image
+                self.semaphore_timer.acquire()
+                if not (tile_info in self.tiles_to_blend):
+                    # load image form disk
+                    path_to_tile = self.returnTilePath(*tile_info)
+                    if os.path.exists(path_to_tile):
+                        tile_image = QtGui.QImage(path_to_tile)
+                        pass
+                    else:
+                        self.semaphore_timer.release()
+                        continue
+                    # add new image into blender
+                    tile_image = tile_image.convertToFormat( \
+                                        QtGui.QImage.Format_RGB888 )
+                    sip_ptr = tile_image.constBits()
+                    c_void_pointer = ct.c_void_p(sip_ptr.__int__())
+                    r = self.blender.addNewImage(data_ptr = c_void_pointer, \
+                                        width = tile_image.size().width(), \
+                                        height = tile_image.size().height(), \
+                                        crop_offset_x = crop_offset_x, \
+                                        crop_offset_y = crop_offset_y, \
+                                        tile_pos_x = tile_pos_x, \
+                                        tile_pos_y = tile_pos_y, \
+                                        tile_width = tile_width, \
+                                        tile_height = tile_height)
+                    if DM_IMG_BLEND_RETURN_OK!=r:
+                        self.semaphore_timer.release()
+                        continue
+                    # append tile info
+                    self.tiles_to_blend.append(tile_info)
+                    pass
+                self.semaphore_timer.release()
+                pass
+            except Queue.Empty:
+                pass
+        pass
+
+    def returnTilePath(self, mat_id, x_index, y_index):
+        path_to_return = self._image_dir+os.path.sep+'tile_%d_%d_%d.bmp'%(mat_id, x_index, y_index)
+        return path_to_return
+
+    def scheduleStop(self):
+        self.update_timer.stop()
+        self.exitFlag = True
+
 class DmPixmapItem(QtGui.QGraphicsPixmapItem):
     """docstring for DmPixmapItem"""
-    def __init__(self, img_load_queue = None, image_dir = '', mat_id = -1, tile_x_index = 0, tile_y_index = 0, \
-                    tile_pos_x = 0., tile_pos_y = 0., tile_width = 0., tile_height = 0.):
+    def __init__(self, img_load_queue = None, img_blend_queue = None, \
+                    image_dir = '', mat_id = -1, \
+                    tile_x_index = 0, tile_y_index = 0, \
+                    tile_pos_x = 0., tile_pos_y = 0., \
+                    tile_width = 0., tile_height = 0.):
         if not img_load_queue:
             raise ValueError('Error: img_load_queue is empty')
         super(DmPixmapItem, self).__init__(parent = None)
@@ -70,6 +218,7 @@ class DmPixmapItem(QtGui.QGraphicsPixmapItem):
         # self.setFlag(QtGui.QGraphicsItem.ItemIgnoresTransformations, True)
 
         self.img_load_queue = img_load_queue
+        self.img_blend_queue = img_blend_queue
         self.image_dir = image_dir
         self.mat_id = mat_id
         self.x_index = tile_x_index
@@ -115,26 +264,20 @@ class DmPixmapItem(QtGui.QGraphicsPixmapItem):
         tile_info = (self.mat_id, self.x_index, self.y_index, pyramid_level)
         # create pixmap
         pixmap = QtGui.QPixmap()
-        if(1==pyramid_level) and (True==DM_USE_BLENDER):
-            if(False==self.IsWaitingForBlending):
-                # set flag
-                self.IsWaitingForBlending = True
-                # send tile info to img_load_queue
+        if(1==pyramid_level) and (True==DM_USE_BLENDER) and \
+                (False==self.IsBlendingDone):
+            blend_info = (self.mat_id, self.x_index, self.y_index, \
+                        self.offset_x, self.offset_y, self.pos_x, self.pos_y, \
+                        self.width, self.height)
+            self.img_blend_queue.put( blend_info )
+            if not QtGui.QPixmapCache.find(str(tile_info), pixmap):
                 self.img_load_queue.put( tile_info )
                 return
-            else:
-                # check if blending is done
-                if False == self.IsBlendingDone:
-                    return
-                # reset flags
-                self.IsBlendingDone = False
-                self.IsWaitingForBlending = False
-                # return if no pixmap is found in the cache
-                if not QtGui.QPixmapCache.find(str(tile_info), pixmap):
-                    return
         elif not QtGui.QPixmapCache.find(str(tile_info), pixmap):
             self.img_load_queue.put( tile_info )
             return
+        # reset flag
+        self.IsBlendingDone = False
         # set pixmap
         painter.save()
         if 1.0>current_lod:
@@ -217,11 +360,10 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
         self.dm_rect_dict = {}
         self.pf_pt_dict = {}
         self.img_load_queue = Queue.LifoQueue()#size infinite
+        self.img_blend_queue = Queue.LifoQueue()
         # self.semaphore_image_loading = QtCore.QSemaphore(1)
         QtGui.QPixmapCache.setCacheLimit(MaxQPixmapCacheLimitInKB)
         QtGui.QPixmapCache.clear()
-        self.blender = dm_img_blend_lib(useOpenCL = 0)
-        self.blender.clearAll()
         self.items_to_blend = [] #(mat_id, index_x, index_y)
         self.prev_items_to_blend = [] #(mat_id, index_x, index_y)
         pass
@@ -478,10 +620,12 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
             group_color_dict = {}
             for tile in tile_list:
                 # load pixmap
-                tile_item = DmPixmapItem(img_load_queue = self.img_load_queue, image_dir = str_crop_image_dir, mat_id = mat_id, \
-                                                    tile_x_index = tile[0], tile_y_index = tile[1], \
-                                                    tile_pos_x = tile[2], tile_pos_y = tile[3], \
-                                                    tile_width = tile[6], tile_height = tile[7])
+                tile_item = DmPixmapItem(img_load_queue = self.img_load_queue, \
+                                        img_blend_queue = self.img_blend_queue, \
+                                        image_dir = str_crop_image_dir, mat_id = mat_id, \
+                                        tile_x_index = tile[0], tile_y_index = tile[1], \
+                                        tile_pos_x = tile[2], tile_pos_y = tile[3], \
+                                        tile_width = tile[6], tile_height = tile[7])
                 tile_offset_x = int(tile[2] - align_tile_dict[tile[0], tile[1]][0])
                 tile_offset_y = int(tile[3] - align_tile_dict[tile[0], tile[1]][1])
                 tile_item.setResizeOffset(tile_offset_x, tile_offset_y)
@@ -516,6 +660,11 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
         self.thread_loadAllImages.signal_sendImageToGUI.connect(self.thread_loadAllImages_addPixmapToCache)
         self.signal_stop_thread_loadingPixmap.connect(self.thread_loadAllImages.scheduleStop)
         self.thread_loadAllImages.start()
+        # start image blend thread
+        self.thread_blender = DmThreadImageBlender(self.img_blend_queue, str_crop_image_dir)
+        self.thread_blender.signal_sendImageToGUI.connect(self.thread_loadAllImages_addPixmapToCache)
+        self.signal_stop_thread_loadingPixmap.connect(self.thread_blender.scheduleStop)
+        self.thread_blender.start()
         # update base mag factor
         if float_pixel_size<=0.3:
             self.updateBaseMagFactor(40.)
@@ -564,72 +713,6 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
         # self.semaphore_image_loading.release(1)
         pass
 
-    def blender_postProcess(self):
-        # check if this is the last tile
-        items_in_view = self.items(0, 0, \
-                    self.viewport().size().width(), \
-                    self.viewport().size().height())
-        items_to_process = []
-        for item in items_in_view:
-            if item.type() != DM_PIXMAP_USERTYPE:
-                continue # jump to next iteration
-            elif (item.mat_id, item.x_index, item.y_index) \
-                    not in self.items_to_blend:
-                return
-            items_to_process.append(item)
-            pass
-        if not items_to_process:
-            return
-        # check if blending is needed
-        if self.prev_items_to_blend and \
-            ( set(self.items_to_blend).issubset(self.prev_items_to_blend) ):
-            pass
-        else:
-            # perform blending
-            r = self.blender.doBlending(blend_width = 16, use_blender = 1, \
-                                    try_gpu = 0)
-            if DM_IMG_BLEND_RETURN_OK!=r:
-                return
-            # output images
-            for i in range(len(self.items_to_blend)):
-                img_index = i # img_index start from zero
-                # get image size
-                r, out_width, out_height = self.blender.outputDimension(img_index)
-                if DM_IMG_BLEND_RETURN_OK!=r:
-                    return
-                # create buffer
-                out_img = np.zeros([out_height, out_width, 3], np.ubyte)
-                # copy image data from blender
-                out_ptr = out_img.ctypes.data_as(ct.POINTER(ct.c_ubyte))
-                r = self.blender.outputBlendedImage(out_ptr, img_index)
-                if DM_IMG_BLEND_RETURN_OK!=r:
-                    return
-                # insert into cache
-                out_qimage = QtGui.QImage(out_img, out_width, out_height, \
-                                    QtGui.QImage.Format_RGB888)
-                out_qpixmap = QtGui.QPixmap.fromImage(out_qimage)
-                out_mat_id, out_x_index, out_y_index = \
-                    self.items_to_blend[i]
-                out_tile_info = (out_mat_id, out_x_index, out_y_index, 1)
-                QtGui.QPixmapCache.insert(str(out_tile_info), out_qpixmap)
-                pass
-            pass
-        # set flags of blended tile items
-        for item in items_to_process:
-            item.setBlendingDoneFlag()
-            pass
-        # update self.prev_items_to_blend
-        self.prev_items_to_blend = list(self.items_to_blend)
-        # clear self.items_to_blend
-        while self.items_to_blend:
-            self.items_to_blend.pop()
-            pass
-        # update blended tile items
-        for item in items_to_process:
-            item.update(item.boundingRect())
-            pass
-        pass
-
     def thread_loadAllImages_addPixmapToCache(self, tile_info, tile_image):
         try:
             mat_id, x_index, y_index, pyramid_level = tile_info
@@ -637,38 +720,17 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
             return
         if self.dm_pixmap_dict.has_key( (mat_id, x_index, y_index) ):
             tile_item = self.dm_pixmap_dict[ (mat_id, x_index, y_index) ]
-            if (1==pyramid_level) and (True==DM_USE_BLENDER):
-                # if this is the first tile, clear blender
-                if not self.items_to_blend:
-                    self.blender.clearAll()
-                # register tile image into blender
-                tile_image = tile_image.convertToFormat( \
-                                    QtGui.QImage.Format_RGB888)
-                sip_ptr = tile_image.constBits()
-                c_void_pointer = ct.c_void_p(sip_ptr.__int__())
-                r = self.blender.addNewImage(data_ptr = c_void_pointer, \
-                                         width = tile_image.size().width(), \
-                                         height = tile_image.size().height(), \
-                                         crop_offset_x = tile_item.offset_x, \
-                                         crop_offset_y = tile_item.offset_y, \
-                                         tile_pos_x = tile_item.pos_x, \
-                                         tile_pos_y = tile_item.pos_y, \
-                                         tile_width = tile_item.width, \
-                                         tile_height = tile_item.height)
-                if DM_IMG_BLEND_RETURN_OK!=r:
-                    return
-                self.items_to_blend.append( (mat_id, x_index, y_index) )
-                # blender post process
-                self.blender_postProcess()
-                pass
-            else:
-                # add tile image into cache if necesary
-                if not QtGui.QPixmapCache.find(str(tile_info)):
-                    pixmap = QtGui.QPixmap.fromImage(tile_image)
-                    QtGui.QPixmapCache.insert(str(tile_info), pixmap)
-                # update this tile item
-                tile_item.update(tile_item.boundingRect())
-                pass
+            # add tile image into cache if necesary
+            if 0==pyramid_level:
+                new_tile_info = (mat_id, x_index, y_index, 1)
+                pixmap = QtGui.QPixmap.fromImage(tile_image)
+                QtGui.QPixmapCache.insert(str(new_tile_info), pixmap)
+                tile_item.setBlendingDoneFlag()
+            elif not QtGui.QPixmapCache.find(str(tile_info)):
+                pixmap = QtGui.QPixmap.fromImage(tile_image)
+                QtGui.QPixmapCache.insert(str(tile_info), pixmap)
+            # update this tile item
+            tile_item.update(tile_item.boundingRect())
             pass
 
     def setImageReviewTileRectVisible(self, isVisible):
