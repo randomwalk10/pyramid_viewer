@@ -6,7 +6,6 @@ import Queue
 import numpy as np
 import glob
 import cv2
-import time
 # define constant values
 DM_BACKGROUND_GRID_SIZE = 10
 
@@ -76,21 +75,21 @@ class DmThreadImageBlender(QtCore.QThread):
         self.exitFlag = False
         self.tiles_to_blend = []
         self.semaphore_timer = QtCore.QSemaphore(1)
-        self.update_timer = QtCore.QBasicTimer()
-        self.update_timer.start(1000, self)
+        self.blend_timer = QtCore.QTimer()
+        self.blend_timer.setSingleShot(False)
+        self.blend_timer.timeout.connect(self.idleProcess)
+        self.blend_timer.start(1000)
         self.blender = dm_img_blend_lib(useOpenCL = 0)
         self.blender.clearAll()
-        self.prev_time = time.time()
         pass
 
     def __del__(self):
         self.wait()
 
-    def timerEvent(self, event):
-        """TODO: Docstring for timerEvent.
+    def idleProcess(self):
+        """TODO: Docstring for idleProcess.
 
-        :event: TODO
-        :returns: TODO
+        :returns: None
 
         """
         if True==self.semaphore_timer.tryAcquire():
@@ -99,6 +98,11 @@ class DmThreadImageBlender(QtCore.QThread):
             if len(self.tiles_to_blend)>1:
                 self.performBlending()
                 pass
+            #reset tiles_to_blend and clear blender
+            while self.tiles_to_blend:
+                self.tiles_to_blend.pop()
+                pass
+            self.blender.clearAll()
             # release semaphore
             self.semaphore_timer.release()
             pass
@@ -109,6 +113,40 @@ class DmThreadImageBlender(QtCore.QThread):
         :returns: TODO
 
         """
+        # resize tiles_to_blend
+        if len(self.tiles_to_blend)>4:
+            self.tiles_to_blend = self.tiles_to_blend[ \
+                                    len(self.tiles_to_blend)-4: ]
+            pass
+        # add images from paths
+        for blend_info in self.tiles_to_blend:
+            mat_id, x_index, y_index, crop_offset_x, crop_offset_y, \
+                tile_pos_x, tile_pos_y, tile_width, tile_height = \
+                blend_info
+            tile_info = mat_id, x_index, y_index
+            # load image form disk
+            path_to_tile = self.returnTilePath(*tile_info)
+            if os.path.exists(path_to_tile):
+                tile_image = QtGui.QImage(path_to_tile)
+                pass
+            else:
+                return
+            # add new image into blender
+            tile_image = tile_image.convertToFormat( \
+                                QtGui.QImage.Format_RGB888 )
+            sip_ptr = tile_image.constBits()
+            c_void_pointer = ct.c_void_p(sip_ptr.__int__())
+            r = self.blender.addNewImage(data_ptr = c_void_pointer, \
+                                width = tile_image.size().width(), \
+                                height = tile_image.size().height(), \
+                                crop_offset_x = crop_offset_x, \
+                                crop_offset_y = crop_offset_y, \
+                                tile_pos_x = tile_pos_x, \
+                                tile_pos_y = tile_pos_y, \
+                                tile_width = tile_width, \
+                                tile_height = tile_height)
+            if DM_IMG_BLEND_RETURN_OK!=r:
+                return
         # perform blending
         r = self.blender.doBlending(blend_width = 16, use_blender = 1, \
                                 try_gpu = 0)
@@ -132,15 +170,10 @@ class DmThreadImageBlender(QtCore.QThread):
             out_qimage = QtGui.QImage(out_img, out_width, out_height, \
                                 QtGui.QImage.Format_RGB888)
             out_mat_id, out_x_index, out_y_index = \
-                self.tiles_to_blend[i]
+                self.tiles_to_blend[i][:3]
             out_tile_info = (out_mat_id, out_x_index, out_y_index, 0)
             self.signal_sendImageToGUI.emit(out_tile_info, out_qimage)
             pass
-        #reset tiles_to_blend and clear blender
-        while self.tiles_to_blend:
-            self.tiles_to_blend.pop()
-            pass
-        self.blender.clearAll()
         pass
 
     def run(self):
@@ -150,42 +183,16 @@ class DmThreadImageBlender(QtCore.QThread):
         """
         while( not self.exitFlag):
             try:
-                blend_info = self._img_blend_queue.get(False, 0.5)
+                blend_info = self._img_blend_queue.get(True, 1)
                 mat_id, x_index, y_index, crop_offset_x, crop_offset_y, \
                     tile_pos_x, tile_pos_y, tile_width, tile_height = \
                     blend_info
-                tile_info = mat_id, x_index, y_index
-                # check if new tile is already here
-                # if not add new image
+                # add blend_info into tiles_to_blend
+                # start timer for image blending
                 self.semaphore_timer.acquire()
-                if not (tile_info in self.tiles_to_blend):
-                    # load image form disk
-                    path_to_tile = self.returnTilePath(*tile_info)
-                    if os.path.exists(path_to_tile):
-                        tile_image = QtGui.QImage(path_to_tile)
-                        pass
-                    else:
-                        self.semaphore_timer.release()
-                        continue
-                    # add new image into blender
-                    tile_image = tile_image.convertToFormat( \
-                                        QtGui.QImage.Format_RGB888 )
-                    sip_ptr = tile_image.constBits()
-                    c_void_pointer = ct.c_void_p(sip_ptr.__int__())
-                    r = self.blender.addNewImage(data_ptr = c_void_pointer, \
-                                        width = tile_image.size().width(), \
-                                        height = tile_image.size().height(), \
-                                        crop_offset_x = crop_offset_x, \
-                                        crop_offset_y = crop_offset_y, \
-                                        tile_pos_x = tile_pos_x, \
-                                        tile_pos_y = tile_pos_y, \
-                                        tile_width = tile_width, \
-                                        tile_height = tile_height)
-                    if DM_IMG_BLEND_RETURN_OK!=r:
-                        self.semaphore_timer.release()
-                        continue
+                if not (blend_info in self.tiles_to_blend):
                     # append tile info
-                    self.tiles_to_blend.append(tile_info)
+                    self.tiles_to_blend.append(blend_info)
                     pass
                 self.semaphore_timer.release()
                 pass
@@ -198,7 +205,7 @@ class DmThreadImageBlender(QtCore.QThread):
         return path_to_return
 
     def scheduleStop(self):
-        self.update_timer.stop()
+        self.blend_timer.stop()
         self.exitFlag = True
 
 class DmPixmapItem(QtGui.QGraphicsPixmapItem):
