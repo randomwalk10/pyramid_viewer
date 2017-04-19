@@ -60,6 +60,7 @@ class DmThreadImageBlender(QtCore.QThread):
 
     """Docstring for DmThreadImageBlender. """
     signal_sendImageToGUI = QtCore.pyqtSignal(tuple, QtGui.QImage)
+    signal_startTimerToGUI = QtCore.pyqtSignal()
 
     def __init__(self, img_blend_queue, image_dir):
         """initialized thread for image blender
@@ -75,10 +76,6 @@ class DmThreadImageBlender(QtCore.QThread):
         self.exitFlag = False
         self.tiles_to_blend = []
         self.semaphore_timer = QtCore.QSemaphore(1)
-        self.blend_timer = QtCore.QTimer()
-        self.blend_timer.setSingleShot(False)
-        self.blend_timer.timeout.connect(self.idleProcess)
-        self.blend_timer.start(1000)
         self.blender = dm_img_blend_lib(useOpenCL = 0)
         self.blender.clearAll()
         pass
@@ -183,7 +180,7 @@ class DmThreadImageBlender(QtCore.QThread):
         """
         while( not self.exitFlag):
             try:
-                blend_info = self._img_blend_queue.get(True, 1)
+                blend_info = self._img_blend_queue.get(True, 0.5)
                 mat_id, x_index, y_index, crop_offset_x, crop_offset_y, \
                     tile_pos_x, tile_pos_y, tile_width, tile_height = \
                     blend_info
@@ -197,6 +194,7 @@ class DmThreadImageBlender(QtCore.QThread):
                 self.semaphore_timer.release()
                 pass
             except Queue.Empty:
+                self.signal_startTimerToGUI.emit()
                 pass
         pass
 
@@ -205,7 +203,6 @@ class DmThreadImageBlender(QtCore.QThread):
         return path_to_return
 
     def scheduleStop(self):
-        self.blend_timer.stop()
         self.exitFlag = True
 
 class DmPixmapItem(QtGui.QGraphicsPixmapItem):
@@ -667,10 +664,15 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
         self.thread_loadAllImages.signal_sendImageToGUI.connect(self.thread_loadAllImages_addPixmapToCache)
         self.signal_stop_thread_loadingPixmap.connect(self.thread_loadAllImages.scheduleStop)
         self.thread_loadAllImages.start()
-        # start image blend thread
+        # start image blend thread and timer
+        self.blend_timer = QtCore.QTimer()
+        self.blend_timer.setSingleShot(True)
+        self.blend_timer.setInterval(100) #100ms
         self.thread_blender = DmThreadImageBlender(self.img_blend_queue, str_crop_image_dir)
         self.thread_blender.signal_sendImageToGUI.connect(self.thread_loadAllImages_addPixmapToCache)
         self.signal_stop_thread_loadingPixmap.connect(self.thread_blender.scheduleStop)
+        self.thread_blender.signal_startTimerToGUI.connect(self.blend_timer.start)
+        self.blend_timer.timeout.connect(self.thread_blender.idleProcess)
         self.thread_blender.start()
         # update base mag factor
         if float_pixel_size<=0.3:
