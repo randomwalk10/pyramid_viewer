@@ -111,9 +111,9 @@ class DmThreadImageBlender(QtCore.QThread):
 
         """
         # resize tiles_to_blend
-        if len(self.tiles_to_blend)>4:
+        if len(self.tiles_to_blend)>6:
             self.tiles_to_blend = self.tiles_to_blend[ \
-                                    len(self.tiles_to_blend)-4: ]
+                                    len(self.tiles_to_blend)-6: ]
             pass
         # add images from paths
         for blend_info in self.tiles_to_blend:
@@ -180,7 +180,7 @@ class DmThreadImageBlender(QtCore.QThread):
         """
         while( not self.exitFlag):
             try:
-                blend_info = self._img_blend_queue.get(True, 0.5)
+                blend_info = self._img_blend_queue.get(True, 0.9)
                 mat_id, x_index, y_index, crop_offset_x, crop_offset_y, \
                     tile_pos_x, tile_pos_y, tile_width, tile_height = \
                     blend_info
