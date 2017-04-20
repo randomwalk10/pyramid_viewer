@@ -233,7 +233,6 @@ class DmPixmapItem(QtGui.QGraphicsPixmapItem):
         self.height = tile_height
         self.offset_x = 0.
         self.offset_y = 0.
-        self.IsWaitingForBlending = False
         self.IsBlendingDone = False
 
     def boundingRect(self):
@@ -368,8 +367,6 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
         # self.semaphore_image_loading = QtCore.QSemaphore(1)
         QtGui.QPixmapCache.setCacheLimit(MaxQPixmapCacheLimitInKB)
         QtGui.QPixmapCache.clear()
-        self.items_to_blend = [] #(mat_id, index_x, index_y)
-        self.prev_items_to_blend = [] #(mat_id, index_x, index_y)
         pass
 
     def initializeImageReviewSpace(self):
@@ -699,6 +696,7 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
         self.signal_stop_thread_loadingPixmap.emit()
         # self.semaphore_image_loading.acquire(1)
         self.thread_loadAllImages.wait()
+        self.thread_blender.wait()
         QtGui.QPixmapCache.clear()
         # remove all items
         for tile_item in self.dm_pixmap_dict.values():
