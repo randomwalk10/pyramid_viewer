@@ -30,7 +30,7 @@ class DmThreadLoadAllImages(QtCore.QThread):
     def run(self):
         while( not self.exitFlag):
             try:
-                tile_info = self.img_load_queue.get(False, 0.5)
+                tile_info = self.img_load_queue.get(True, 0.5)
                 path_to_tile = self.returnTilePath(*tile_info)
                 if os.path.exists(path_to_tile):
                     tile_image = QtGui.QImage(path_to_tile)
@@ -180,7 +180,8 @@ class DmThreadImageBlender(QtCore.QThread):
         """
         while( not self.exitFlag):
             try:
-                blend_info = self._img_blend_queue.get(True, 0.9)
+                blend_info = self._img_blend_queue.get(True, 0.5)
+                self.signal_startTimerToGUI.emit()
                 mat_id, x_index, y_index, crop_offset_x, crop_offset_y, \
                     tile_pos_x, tile_pos_y, tile_width, tile_height = \
                     blend_info
@@ -194,7 +195,6 @@ class DmThreadImageBlender(QtCore.QThread):
                 self.semaphore_timer.release()
                 pass
             except Queue.Empty:
-                self.signal_startTimerToGUI.emit()
                 pass
         pass
 
@@ -664,7 +664,7 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
         # start image blend thread and timer
         self.blend_timer = QtCore.QTimer()
         self.blend_timer.setSingleShot(True)
-        self.blend_timer.setInterval(100) #100ms
+        self.blend_timer.setInterval(1000) #1000ms
         self.thread_blender = DmThreadImageBlender(self.img_blend_queue, str_crop_image_dir)
         self.thread_blender.signal_sendImageToGUI.connect(self.thread_loadAllImages_addPixmapToCache)
         self.signal_stop_thread_loadingPixmap.connect(self.thread_blender.scheduleStop)
