@@ -67,15 +67,11 @@ class DmPyramidTile(QtGui.QGraphicsPixmapItem):
 
     def boundingRect(self):
         return QtCore.QRectF(0., 0., \
-                             2**(self._pyramid_level-1)*self._tile_width, \
-                             2**(self._pyramid_level-1)*self._tile_height)
+                             self._pyramid_level*self._tile_width, \
+                             self._pyramid_level*self._tile_height)
         pass
 
     def paint(self, painter, option, widget):
-        if not isinstance(painter, QtGui.QPainter):
-            return
-        elif not isinstance(option, QtGui.QStyleOptionGraphicsItem):
-            return
         current_lod = option.levelOfDetailFromTransform( \
                                     painter.worldTransform() )
         # find path to tile
@@ -90,7 +86,6 @@ class DmPyramidTile(QtGui.QGraphicsPixmapItem):
             return
         tile_info = (self._mat_id, self._x_index, \
                      self._y_index, pyramid_level)
-        print self._mat_id, self._x_index, self._y_index, pyramid_level
         # create pixmap
         pixmap = QtGui.QPixmap()
         if not QtGui.QPixmapCache.find(str(tile_info), pixmap):
