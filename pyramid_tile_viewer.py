@@ -24,16 +24,25 @@ class DmThreadLoadAllImages(QtCore.QThread):
         while( not self.exitFlag):
             try:
                 tile_info = self._img_load_queue.get(True, 0.5)
-                path_to_tile = self.returnTilePath(*tile_info)
+                mat_id, x_index, y_index, pyramid_level, \
+                    byte_pos, byte_size = tile_info
+                path_to_tile = self.returnTilePath(mat_id)
                 if os.path.exists(path_to_tile):
-                    tile_image = QtGui.QImage(path_to_tile)
-                    self.signal_sendImageToGUI.emit(tile_info, tile_image)
+                    images_file = open(path_to_tile, "rb")
+                    images_file.seek(byte_pos)
+                    jpg_data = images_file.read(byte_size)
+                    tile_image = QtGui.QImage.fromData(jpg_data)
+                    images_file.close()
+                    tile_info_short = (mat_id, x_index, \
+                                       y_index, pyramid_level)
+                    self.signal_sendImageToGUI.emit(tile_info_short, \
+                                                    tile_image)
             except Queue.Empty:
                 pass
 
-    def returnTilePath(self, mat_id, x_index, y_index, pyramid_level):
+    def returnTilePath(self, mat_id):
         return self._image_dir+os.path.sep+ \
-                'pr_%d_%d_%d_%d.jpg'%(mat_id, x_index, y_index, pyramid_level)
+                'pyramid_data_%d.bin'%(mat_id)
 
     def scheduleStop(self):
         self.exitFlag = True
@@ -45,7 +54,8 @@ class DmPyramidTile(QtGui.QGraphicsPixmapItem):
     def __init__(self, img_load_queue = None, mat_id = -1, \
                  x_index = 0, y_index = 0, pyramid_level = 0, \
                  tl_pos_x = 0., tl_pos_y = 0., \
-                 tile_width = 0, tile_height = 0):
+                 tile_width = 0, tile_height = 0, \
+                 byte_pos = 0, byte_size = 0):
         if not img_load_queue:
             raise ValueError('Error, img_load_queue is empty')
         super(DmPyramidTile, self).__init__(parent = None)
@@ -64,6 +74,8 @@ class DmPyramidTile(QtGui.QGraphicsPixmapItem):
         self._tl_pos_y = tl_pos_y
         self._tile_width = tile_width
         self._tile_height = tile_height
+        self._byte_pos = byte_pos
+        self._byte_size = byte_size
 
     def boundingRect(self):
         return QtCore.QRectF(0., 0., \
@@ -85,10 +97,13 @@ class DmPyramidTile(QtGui.QGraphicsPixmapItem):
         if(pyramid_level!=self._pyramid_level):
             return
         tile_info = (self._mat_id, self._x_index, \
-                     self._y_index, pyramid_level)
+                     self._y_index, pyramid_level, \
+                     self._byte_pos, self._byte_size)
+        tile_info_short = (self._mat_id, self._x_index, \
+                            self._y_index, pyramid_level)
         # create pixmap
         pixmap = QtGui.QPixmap()
-        if not QtGui.QPixmapCache.find(str(tile_info), pixmap):
+        if not QtGui.QPixmapCache.find(str(tile_info_short), pixmap):
             self._img_load_queue.put( tile_info )
             return
         # set pixmap
@@ -333,6 +348,30 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
                 return
             str_max_tile_num = pyramid_info_lines[tile_num_index]
             int_max_tile_num = int(str_max_tile_num)
+            # get data size list
+            tile_pos_index = 0
+            for i in range(len(pyramid_info_lines)):
+                if '[tile_data_size]' == \
+                        pyramid_info_lines[i]:
+                    tile_pos_index = i + 1
+                    break
+            if(tile_pos_index==0):
+                QtGui.QMessageBox.about(self, 'Error', \
+                        'Failed to find [tile_data_size]')
+                return
+            tile_map = {}
+            for i in range(tile_pos_index, tile_pos_index+int_max_tile_num):
+                str_tile_index_x, str_tile_index_y, str_tile_pyramid_level, \
+                    str_tile_data_pos, str_tile_data_size = \
+                    pyramid_info_lines[i].split(',')
+                tile_map[ ( \
+                                int(str_tile_index_x), \
+                                int(str_tile_index_y), \
+                                int(str_tile_pyramid_level) \
+                                    ) ] = \
+                                    ( 0,0,0,0, \
+                                     int(str_tile_data_pos), \
+                                     int(str_tile_data_size) )
             # get pyramid tile list
             tile_pos_index = 0
             for i in range(len(pyramid_info_lines)):
@@ -344,36 +383,46 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
                 QtGui.QMessageBox.about(self, 'Error', \
                         'Failed to find [pyramid_tile_pos_scene_topleft]')
                 return
-            tile_list = []
             for i in range(tile_pos_index, tile_pos_index+int_max_tile_num):
                 str_tile_index_x, str_tile_index_y, str_tile_pyramid_level, \
                     str_tile_pos_x, str_tile_pos_y, \
                     str_tile_width, str_tile_height = \
                     pyramid_info_lines[i].split(',')
-                tile_list.append( ( \
-                                   int(str_tile_index_x), \
-                                   int(str_tile_index_y), \
-                                   int(str_tile_pyramid_level), \
-                                   float(str_tile_pos_x), \
-                                   float(str_tile_pos_y), \
-                                   int(str_tile_width), \
-                                   int(str_tile_height) \
-                                   ) )
+                tile_info = tile_map[( \
+                                      int(str_tile_index_x), \
+                                      int(str_tile_index_y), \
+                                      int(str_tile_pyramid_level) )]
+                tile_map[ ( \
+                                int(str_tile_index_x), \
+                                int(str_tile_index_y), \
+                                int(str_tile_pyramid_level) \
+                                    ) ] = \
+                                    ( \
+                                     float(str_tile_pos_x), \
+                                     float(str_tile_pos_y), \
+                                     int(str_tile_width), \
+                                     int(str_tile_height), \
+                                     tile_info[4], \
+                                     tile_info[5] )
             tile_loading_progress = QtGui.QProgressDialog( \
                 'tile loading for mat[%d] is started'%mat_id, \
-                'cancel', 0, len(tile_list), self)
+                'cancel', 0, len(tile_map), self)
             tile_loading_progress.setWindowTitle('tile loading in progress')
             tile_loading_progress.setFixedSize(400, 150)
             tile_loading_progress.setValue(0)
 
-            for tile in tile_list:
+            for tile in tile_map.keys():
                 # load pixmap
+                tile_info = tile_map[tile]
                 tile_item = DmPyramidTile( \
                         img_load_queue = self.img_load_queue, \
                         mat_id = mat_id, x_index = tile[0], \
                         y_index = tile[1], pyramid_level = tile[2], \
-                        tl_pos_x = tile[3], tl_pos_y = tile[4], \
-                        tile_width = tile[5], tile_height = tile[6] \
+                        tl_pos_x = tile_info[0], tl_pos_y = tile_info[1], \
+                        tile_width = tile_info[2], \
+                        tile_height = tile_info[3], \
+                        byte_pos = tile_info[4], \
+                        byte_size = tile_info[5]
                                           )
                 self._scene.addItem(tile_item)
                 self.dm_pixmap_dict[ \
