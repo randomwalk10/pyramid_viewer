@@ -8,50 +8,12 @@ DM_BACKGROUND_GRID_SIZE = 10
 
 DM_Z_VALUE_FOR_PIXMAP = 1.0
 # define classes
-class DmThreadLoadAllImages(QtCore.QThread):
-    """docstring for DmThreadLoadAllImages"""
-    signal_sendImageToGUI = QtCore.pyqtSignal(tuple, QtGui.QImage)
-    def __init__(self, img_load_queue, image_dir):
-        super(DmThreadLoadAllImages, self).__init__()
-        self._img_load_queue = img_load_queue
-        self._image_dir = image_dir
-        self.exitFlag = False
-
-    def __del__(self):
-        self.wait()
-
-    def run(self):
-        while( not self.exitFlag):
-            try:
-                tile_info = self._img_load_queue.get(True, 0.5)
-                mat_id, x_index, y_index, pyramid_level, \
-                    byte_pos, byte_size = tile_info
-                path_to_tile = self.returnTilePath(mat_id)
-                if os.path.exists(path_to_tile):
-                    images_file = open(path_to_tile, "rb")
-                    images_file.seek(byte_pos)
-                    jpg_data = images_file.read(byte_size)
-                    tile_image = QtGui.QImage.fromData(jpg_data)
-                    images_file.close()
-                    tile_info_short = (mat_id, x_index, \
-                                       y_index, pyramid_level)
-                    self.signal_sendImageToGUI.emit(tile_info_short, \
-                                                    tile_image)
-            except Queue.Empty:
-                pass
-
-    def returnTilePath(self, mat_id):
-        return self._image_dir+os.path.sep+ \
-                'pyramid_data_%d.bin'%(mat_id)
-
-    def scheduleStop(self):
-        self.exitFlag = True
-
 class DmPyramidTile(QtGui.QGraphicsPixmapItem):
 
     """Docstring for DmPyramidTile. """
 
-    def __init__(self, img_load_queue = None, mat_id = -1, \
+    def __init__(self, img_load_queue = None, \
+                 image_dir = "", mat_id = -1, \
                  x_index = 0, y_index = 0, pyramid_level = 0, \
                  tl_pos_x = 0., tl_pos_y = 0., \
                  tile_width = 0, tile_height = 0, \
@@ -66,6 +28,7 @@ class DmPyramidTile(QtGui.QGraphicsPixmapItem):
         # self.setFlag(QtGui.QGraphicsItem.ItemIgnoresTransformations, True)
 
         self._img_load_queue = img_load_queue
+        self._image_dir = image_dir
         self._mat_id = mat_id
         self._x_index = x_index
         self._y_index = y_index
@@ -76,6 +39,8 @@ class DmPyramidTile(QtGui.QGraphicsPixmapItem):
         self._tile_height = tile_height
         self._byte_pos = byte_pos
         self._byte_size = byte_size
+        self._path_to_tile = self._image_dir+os.path.sep+ \
+                'pyramid_data_%d.bin'%(self._mat_id)
 
     def boundingRect(self):
         return QtCore.QRectF(0., 0., \
@@ -97,15 +62,17 @@ class DmPyramidTile(QtGui.QGraphicsPixmapItem):
         if(pyramid_level!=self._pyramid_level):
             return
         tile_info = (self._mat_id, self._x_index, \
-                     self._y_index, pyramid_level, \
-                     self._byte_pos, self._byte_size)
-        tile_info_short = (self._mat_id, self._x_index, \
                             self._y_index, pyramid_level)
         # create pixmap
         pixmap = QtGui.QPixmap()
-        if not QtGui.QPixmapCache.find(str(tile_info_short), pixmap):
-            self._img_load_queue.put( tile_info )
-            return
+        if not QtGui.QPixmapCache.find(str(tile_info), pixmap):
+            images_file = open(self._path_to_tile, "rb")
+            images_file.seek(self._byte_pos)
+            jpg_data = images_file.read(self._byte_size)
+            tile_image = QtGui.QImage.fromData(jpg_data)
+            pixmap = QtGui.QPixmap.fromImage(tile_image)
+            QtGui.QPixmapCache.insert(str(tile_info), pixmap)
+            images_file.close()
         # set pixmap
         painter.save()
         if 1.0>current_lod:
@@ -121,7 +88,6 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
     signal_scene_rect = QtCore.pyqtSignal(QtCore.QRectF)
     signal_mag_factor = QtCore.pyqtSignal(str)
     signal_cursor_pos = QtCore.pyqtSignal(QtCore.QPointF)
-    signal_stop_thread_loadingPixmap = QtCore.pyqtSignal()
 
     def __init__(self, scene = None, parent = None, max_zoom_in_level = MaxZoomInLevel, max_zoom_out_level = MaxZoomOutLevel):
         if scene:
@@ -416,6 +382,7 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
                 tile_info = tile_map[tile]
                 tile_item = DmPyramidTile( \
                         img_load_queue = self.img_load_queue, \
+                        image_dir = str_pr_image_dir, \
                         mat_id = mat_id, x_index = tile[0], \
                         y_index = tile[1], pyramid_level = tile[2], \
                         tl_pos_x = tile_info[0], tl_pos_y = tile_info[1], \
@@ -434,18 +401,6 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
                                                      tile[1], tile[2]) )
                 tile_loading_progress.setValue( \
                         tile_loading_progress.value()+1 )
-        # start image loading thread
-        self.thread_loadAllImages = DmThreadLoadAllImages( \
-                                    self.img_load_queue, str_pr_image_dir )
-        self.thread_loadAllImages.started.connect( \
-                                    self.thread_loadAllImages_started )
-        self.thread_loadAllImages.finished.connect( \
-                                    self.thread_loadAllImages_finished )
-        self.thread_loadAllImages.signal_sendImageToGUI.connect( \
-                                self.thread_loadAllImages_addPixmapToCache )
-        self.signal_stop_thread_loadingPixmap.connect( \
-                                self.thread_loadAllImages.scheduleStop)
-        self.thread_loadAllImages.start()
         pass
 
     def clearImageReviewTiles(self):
@@ -455,10 +410,7 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
                 self.img_load_queue.get(False)
             QtGui.QPixmapCache.clear()
             return
-        # stop thread
-        # self.thread_loadAllImages.scheduleStop()
-        self.signal_stop_thread_loadingPixmap.emit()
-        self.thread_loadAllImages.wait()
+        # clear cache
         QtGui.QPixmapCache.clear()
         # remove all items
         for tile_item in self.dm_pixmap_dict.values():
@@ -469,29 +421,6 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
             self.img_load_queue.get(False)
         QtGui.QPixmapCache.clear()
         pass
-
-    def thread_loadAllImages_started(self):
-        pass
-
-    def thread_loadAllImages_finished(self):
-        pass
-
-    def thread_loadAllImages_addPixmapToCache(self, tile_info, tile_image):
-        try:
-            mat_id, x_index, y_index, pyramid_level = tile_info
-        except ValueError:
-            return
-        if self.dm_pixmap_dict.has_key( \
-                    (mat_id, x_index, y_index, pyramid_level) ):
-            tile_item = self.dm_pixmap_dict[ \
-                    (mat_id, x_index, y_index, pyramid_level) ]
-            # add tile image into cache if necesary
-            if not QtGui.QPixmapCache.find(str(tile_info)):
-                pixmap = QtGui.QPixmap.fromImage(tile_image)
-                QtGui.QPixmapCache.insert(str(tile_info), pixmap)
-            # update this tile item
-            tile_item.update(tile_item.boundingRect())
-            pass
 
 class dm_large_image_tile_viewer(QtGui.QFrame):
     """docstring for dm_large_image_tile_viewer"""
