@@ -7,6 +7,8 @@ import glob
 DM_BACKGROUND_GRID_SIZE = 10
 
 DM_Z_VALUE_FOR_PIXMAP = 1.0
+
+CYCLE_LEN = (1<<30)
 # define classes
 class DmPyramidTile(QtGui.QGraphicsPixmapItem):
 
@@ -328,15 +330,17 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
             tile_map = {}
             for i in range(tile_pos_index, tile_pos_index+int_max_tile_num):
                 str_tile_index_x, str_tile_index_y, str_tile_pyramid_level, \
-                    str_tile_data_pos, str_tile_data_size = \
-                    pyramid_info_lines[i].split(',')
+                    str_tile_data_pos_cycle, str_tile_data_pos_mod, \
+                    str_tile_data_size = pyramid_info_lines[i].split(',')
+                int_tile_data_pos = int(str_tile_data_pos_cycle)*CYCLE_LEN+ \
+                                        int(str_tile_data_pos_mod)
                 tile_map[ ( \
                                 int(str_tile_index_x), \
                                 int(str_tile_index_y), \
                                 int(str_tile_pyramid_level) \
                                     ) ] = \
                                     ( 0,0,0,0, \
-                                     int(str_tile_data_pos), \
+                                     int_tile_data_pos, \
                                      int(str_tile_data_size) )
             # get pyramid tile list
             tile_pos_index = 0
