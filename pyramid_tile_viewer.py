@@ -3,12 +3,6 @@ from basic_values import *
 from PyQt4 import QtCore, QtGui
 import Queue
 import glob
-# define constant values
-DM_BACKGROUND_GRID_SIZE = 10
-
-DM_Z_VALUE_FOR_PIXMAP = 1.0
-
-CYCLE_LEN = (1<<30)
 # define classes
 class DmPyramidTile(QtGui.QGraphicsPixmapItem):
 
@@ -60,6 +54,13 @@ class DmPyramidTile(QtGui.QGraphicsPixmapItem):
         else:
             # calculate pyramid level
             pyramid_level = int(1/current_lod)
+            temp_level = MAX_PYRAMID_LEVEL
+            while temp_level>pyramid_level:
+                temp_level/=2.
+                pass
+            pyramid_level = temp_level
+            pass
+
         # return if pyramid_level does not match
         if(pyramid_level!=self._pyramid_level):
             return
@@ -78,7 +79,8 @@ class DmPyramidTile(QtGui.QGraphicsPixmapItem):
         # set pixmap
         painter.save()
         if 1.0>current_lod:
-            painter.scale(1/current_lod, 1/current_lod)
+            # painter.scale(1/current_lod, 1/current_lod)
+            painter.scale(pyramid_level, pyramid_level)
         painter.drawPixmap(0, 0, pixmap)
         painter.restore()
         pass
@@ -230,18 +232,18 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
         pass
 
     def viewZoomIn(self):
-        if( 2.*(self.view_mag_factor) <= float(self.max_zoom_in_level) ):
-            self.view_mag_factor*=2.
-            self.signal_mag_factor.emit('%.2fX'%(self.base_mag_factor*self.view_mag_factor))
-            self.scale(2., 2.)
+        if( ZOOM_IN_FACTOR*(self.view_mag_factor) <= float(self.max_zoom_in_level) ):
+            self.view_mag_factor*=ZOOM_IN_FACTOR
+            self.signal_mag_factor.emit('%.5fX'%(self.base_mag_factor*self.view_mag_factor))
+            self.scale(ZOOM_IN_FACTOR, ZOOM_IN_FACTOR)
             pass
         pass
 
     def viewZoomOut(self):
-        if( 0.5*(self.view_mag_factor) >= (1./float(self.max_zoom_out_level)) ):
-            self.view_mag_factor*=0.5
-            self.signal_mag_factor.emit('%.2fX'%(self.base_mag_factor*self.view_mag_factor))
-            self.scale(0.5, 0.5)
+        if( ZOOM_OUT_FACTOR*(self.view_mag_factor) >= (1./float(self.max_zoom_out_level)) ):
+            self.view_mag_factor*=ZOOM_OUT_FACTOR
+            self.signal_mag_factor.emit('%.5fX'%(self.base_mag_factor*self.view_mag_factor))
+            self.scale(ZOOM_OUT_FACTOR, ZOOM_OUT_FACTOR)
             pass
         pass
 
