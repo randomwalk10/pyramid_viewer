@@ -8,14 +8,11 @@ class DmPyramidTile(QtGui.QGraphicsPixmapItem):
 
     """Docstring for DmPyramidTile. """
 
-    def __init__(self, img_load_queue = None, \
-                 image_dir = "", mat_id = -1, \
+    def __init__(self, image_dir = "", mat_id = -1, \
                  x_index = 0, y_index = 0, pyramid_level = 0, \
                  tl_pos_x = 0., tl_pos_y = 0., \
                  tile_width = 0, tile_height = 0, \
                  byte_pos = 0, byte_size = 0):
-        if not img_load_queue:
-            raise ValueError('Error, img_load_queue is empty')
         super(DmPyramidTile, self).__init__(parent = None)
         # self.setTransformationMode(QtCore.Qt.SmoothTransformation)
         self.setTransformationMode(QtCore.Qt.FastTransformation)
@@ -23,7 +20,6 @@ class DmPyramidTile(QtGui.QGraphicsPixmapItem):
         self.setPos(tl_pos_x, tl_pos_y)
         # self.setFlag(QtGui.QGraphicsItem.ItemIgnoresTransformations, True)
 
-        self._img_load_queue = img_load_queue
         self._image_dir = image_dir
         self._mat_id = mat_id
         self._x_index = x_index
@@ -112,7 +108,6 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
         self.prescan_tile_list = []
         self.dm_pixmap_dict = {}
         self.pf_pt_dict = {}
-        self.img_load_queue = Queue.LifoQueue()#size infinite
         QtGui.QPixmapCache.setCacheLimit(MaxQPixmapCacheLimitInKB)
         QtGui.QPixmapCache.clear()
         pass
@@ -306,6 +301,23 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
                 return
             pyramid_info_file = open(path_to_pyramid_info, 'r')
             pyramid_info_lines = pyramid_info_file.read().splitlines()
+            # get microscope info
+            tile_num_index = 0
+            for i in range(len(pyramid_info_lines)):
+                if '[microscope_info]' == pyramid_info_lines[i]:
+                    tile_num_index = i + 1
+                    break
+            if(tile_num_index==0):
+                QtGui.QMessageBox.about(self, 'Error', \
+                                        'Failed to find [microscope_info]')
+                return
+            str_obj_mag, str_um_per_pixel_x, \
+                str_um_per_pixel_y = \
+                pyramid_info_lines[tile_num_index].split(',')
+            obj_mag = int(str_obj_mag)
+            um_per_pixel_x = float(str_um_per_pixel_x)
+            um_per_pixel_y = float(str_um_per_pixel_y)
+            self.updateBaseMagFactor(obj_mag)
             # get tile num
             tile_num_index = 0
             for i in range(len(pyramid_info_lines)):
@@ -387,7 +399,6 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
                 # load pixmap
                 tile_info = tile_map[tile]
                 tile_item = DmPyramidTile( \
-                        img_load_queue = self.img_load_queue, \
                         image_dir = str_pr_image_dir, \
                         mat_id = mat_id, x_index = tile[0], \
                         y_index = tile[1], pyramid_level = tile[2], \
@@ -411,9 +422,7 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
 
     def clearImageReviewTiles(self):
         if not self.dm_pixmap_dict:
-            # cleanup queue and cache
-            while not self.img_load_queue.empty():
-                self.img_load_queue.get(False)
+            # cleanup cache
             QtGui.QPixmapCache.clear()
             return
         # clear cache
@@ -422,9 +431,7 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
         for tile_item in self.dm_pixmap_dict.values():
             self._scene.removeItem(tile_item)
         self.dm_pixmap_dict.clear()
-        # cleanup queue and cache
-        while not self.img_load_queue.empty():
-            self.img_load_queue.get(False)
+        # cleanup cache
         QtGui.QPixmapCache.clear()
         pass
 
