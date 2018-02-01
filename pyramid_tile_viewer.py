@@ -257,6 +257,15 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
     def getCurrentLevelOfDetails(self):
         return self.view_mag_factor
 
+    def createImageReviewTilesFromDM(self, arg1):
+        """TODO: Docstring for createImageReviewTilesFromDM.
+
+        :arg1: TODO
+        :returns: TODO
+
+        """
+        pass
+
     def createImageReviewTiles(self):
         # get image directory
         qstr_image_dir = QtGui.QFileDialog.getExistingDirectory( \
