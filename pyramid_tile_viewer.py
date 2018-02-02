@@ -1,14 +1,28 @@
+# import
 import os, sys
 from basic_values import *
 from PyQt4 import QtCore, QtGui
 import Queue
 import glob
+import struct, time
+# const value
+MAX_LAYER_NUM = 20
+TILE_WIDTH = 256
+TILE_HEIGHT = 256
+# function
+def readTile(file_handle):
+    layer_index, = struct.unpack('h', file_handle.read(2))
+    col_index, = struct.unpack('i', file_handle.read(4))
+    row_index, = struct.unpack('i', file_handle.read(4))
+    byte_pos, = struct.unpack('q', file_handle.read(8))
+    byte_size, = struct.unpack('i', file_handle.read(4))
+    return layer_index, col_index, row_index, byte_pos, byte_size
 # define classes
 class DmPyramidTile(QtGui.QGraphicsPixmapItem):
 
     """Docstring for DmPyramidTile. """
 
-    def __init__(self, image_dir = "", mat_id = -1, \
+    def __init__(self, image_filepath = "", \
                  x_index = 0, y_index = 0, pyramid_level = 0, \
                  tl_pos_x = 0., tl_pos_y = 0., \
                  tile_width = 0, tile_height = 0, \
@@ -20,8 +34,7 @@ class DmPyramidTile(QtGui.QGraphicsPixmapItem):
         self.setPos(tl_pos_x, tl_pos_y)
         # self.setFlag(QtGui.QGraphicsItem.ItemIgnoresTransformations, True)
 
-        self._image_dir = image_dir
-        self._mat_id = mat_id
+        self._path_to_tile = image_filepath
         self._x_index = x_index
         self._y_index = y_index
         self._pyramid_level = pyramid_level
@@ -31,8 +44,6 @@ class DmPyramidTile(QtGui.QGraphicsPixmapItem):
         self._tile_height = tile_height
         self._byte_pos = byte_pos
         self._byte_size = byte_size
-        self._path_to_tile = self._image_dir+os.path.sep+ \
-                'pyramid_data_%d.bin'%(self._mat_id)
 
     def boundingRect(self):
         return QtCore.QRectF(0., 0., \
@@ -60,8 +71,7 @@ class DmPyramidTile(QtGui.QGraphicsPixmapItem):
         # return if pyramid_level does not match
         if(pyramid_level!=self._pyramid_level):
             return
-        tile_info = (self._mat_id, self._x_index, \
-                            self._y_index, pyramid_level)
+        tile_info = (self._x_index, self._y_index, pyramid_level)
         # create pixmap
         pixmap = QtGui.QPixmap()
         if not QtGui.QPixmapCache.find(str(tile_info), pixmap):
@@ -257,176 +267,111 @@ class DmReviewGraphicsViewer(QtGui.QGraphicsView):
     def getCurrentLevelOfDetails(self):
         return self.view_mag_factor
 
-    def createImageReviewTilesFromDM(self, arg1):
-        """TODO: Docstring for createImageReviewTilesFromDM.
-
-        :arg1: TODO
-        :returns: TODO
-
-        """
-        pass
-
-    def createImageReviewTiles(self):
-        # get image directory
-        qstr_image_dir = QtGui.QFileDialog.getExistingDirectory( \
-                                parent = self, caption = 'Open Directory', \
-                                directory = current_dir )
-        if not qstr_image_dir:
-            QtGui.QMessageBox.about(self, 'Error', 'Invalid directory')
-            return
-        str_pr_image_dir = str(qstr_image_dir)
-        if not os.path.exists(str_pr_image_dir):
-            QtGui.QMessageBox.about(self, 'Error', \
-                                    'Failed to find pyramid tiles')
-            return
-        # get the list of mat_id
-        pr_info_filename_list = glob.glob( \
-                        str_pr_image_dir+os.path.sep+'pyramid_info_*.txt')
-        mat_id_list = []
-        for filename in pr_info_filename_list:
-            start_index = filename.find('pyramid_info_')+len('pyramid_info_')
-            end_index = filename.find('.txt')
-            try:
-                mat_id = int(filename[start_index:end_index])
-                mat_id_list.append(mat_id)
-            except ValueError:
-                continue
-        if not mat_id_list:
-            QtGui.QMessageBox.about(self, 'Error', \
-                                    'Failed to find pyramid info files')
+    def createImageReviewTilesFromDM(self):
+        # get image filepath
+        qstr_image_filename = QtGui.QFileDialog.getOpenFileName( \
+                                parent = self, caption = 'Open File', \
+                                directory = current_dir, \
+                                filter = "dmetrix file (*.dmetrix)")
+        str_image_file_name = str(qstr_image_filename);
+        if not os.path.exists(str_image_file_name):
+            QtGui.QMessageBox.about(self, 'Error', 'Invalid filepath')
             return
         # clear image review tiles
         self.clearImageReviewTiles()
-        # get tile_list and create DmPixmapItem
-        for mat_id in mat_id_list:
-            # parse align info
-            path_to_pyramid_info = str_pr_image_dir+os.path.sep+ \
-                'pyramid_info_'+str(mat_id)+'.txt'
-            if not os.path.exists(path_to_pyramid_info):
-                QtGui.QMessageBox.about(self, 'Error', \
-                                        'Failed to find '+ \
-                                        'pyramid_info_'+ \
-                                        str(mat_id)+'.txt')
-                return
-            pyramid_info_file = open(path_to_pyramid_info, 'r')
-            pyramid_info_lines = pyramid_info_file.read().splitlines()
-            # get microscope info
-            tile_num_index = 0
-            for i in range(len(pyramid_info_lines)):
-                if '[microscope_info]' == pyramid_info_lines[i]:
-                    tile_num_index = i + 1
-                    break
-            if(tile_num_index==0):
-                QtGui.QMessageBox.about(self, 'Error', \
-                                        'Failed to find [microscope_info]')
-                return
-            str_obj_mag, str_um_per_pixel_x, \
-                str_um_per_pixel_y = \
-                pyramid_info_lines[tile_num_index].split(',')
-            obj_mag = int(str_obj_mag)
-            um_per_pixel_x = float(str_um_per_pixel_x)
-            um_per_pixel_y = float(str_um_per_pixel_y)
-            self.updateBaseMagFactor(obj_mag)
-            # get tile num
-            tile_num_index = 0
-            for i in range(len(pyramid_info_lines)):
-                if '[tile_num]' == pyramid_info_lines[i]:
-                    tile_num_index = i + 1
-                    break
-            if(tile_num_index==0):
-                QtGui.QMessageBox.about(self, 'Error', \
-                                        'Failed to find [tile_num]')
-                return
-            str_max_tile_num = pyramid_info_lines[tile_num_index]
-            int_max_tile_num = int(str_max_tile_num)
-            # get data size list
-            tile_pos_index = 0
-            for i in range(len(pyramid_info_lines)):
-                if '[tile_data_size]' == \
-                        pyramid_info_lines[i]:
-                    tile_pos_index = i + 1
-                    break
-            if(tile_pos_index==0):
-                QtGui.QMessageBox.about(self, 'Error', \
-                        'Failed to find [tile_data_size]')
-                return
-            tile_map = {}
-            for i in range(tile_pos_index, tile_pos_index+int_max_tile_num):
-                str_tile_index_x, str_tile_index_y, str_tile_pyramid_level, \
-                    str_tile_data_pos_cycle, str_tile_data_pos_mod, \
-                    str_tile_data_size = pyramid_info_lines[i].split(',')
-                int_tile_data_pos = int(str_tile_data_pos_cycle)*CYCLE_LEN+ \
-                                        int(str_tile_data_pos_mod)
-                tile_map[ ( \
-                                int(str_tile_index_x), \
-                                int(str_tile_index_y), \
-                                int(str_tile_pyramid_level) \
-                                    ) ] = \
-                                    ( 0,0,0,0, \
-                                     int_tile_data_pos, \
-                                     int(str_tile_data_size) )
-            # get pyramid tile list
-            tile_pos_index = 0
-            for i in range(len(pyramid_info_lines)):
-                if '[pyramid_tile_pos_scene_topleft]' == \
-                        pyramid_info_lines[i]:
-                    tile_pos_index = i + 1
-                    break
-            if(tile_pos_index==0):
-                QtGui.QMessageBox.about(self, 'Error', \
-                        'Failed to find [pyramid_tile_pos_scene_topleft]')
-                return
-            for i in range(tile_pos_index, tile_pos_index+int_max_tile_num):
-                str_tile_index_x, str_tile_index_y, str_tile_pyramid_level, \
-                    str_tile_pos_x, str_tile_pos_y, \
-                    str_tile_width, str_tile_height = \
-                    pyramid_info_lines[i].split(',')
-                tile_info = tile_map[( \
-                                      int(str_tile_index_x), \
-                                      int(str_tile_index_y), \
-                                      int(str_tile_pyramid_level) )]
-                tile_map[ ( \
-                                int(str_tile_index_x), \
-                                int(str_tile_index_y), \
-                                int(str_tile_pyramid_level) \
-                                    ) ] = \
-                                    ( \
-                                     float(str_tile_pos_x), \
-                                     float(str_tile_pos_y), \
-                                     int(str_tile_width), \
-                                     int(str_tile_height), \
-                                     tile_info[4], \
-                                     tile_info[5] )
-            tile_loading_progress = QtGui.QProgressDialog( \
-                'tile loading for mat[%d] is started'%mat_id, \
-                'cancel', 0, len(tile_map), self)
-            tile_loading_progress.setWindowTitle('tile loading in progress')
-            tile_loading_progress.setFixedSize(400, 150)
-            tile_loading_progress.setValue(0)
-
-            for tile in tile_map.keys():
-                # load pixmap
-                tile_info = tile_map[tile]
-                tile_item = DmPyramidTile( \
-                        image_dir = str_pr_image_dir, \
-                        mat_id = mat_id, x_index = tile[0], \
-                        y_index = tile[1], pyramid_level = tile[2], \
-                        tl_pos_x = tile_info[0], tl_pos_y = tile_info[1], \
-                        tile_width = tile_info[2], \
-                        tile_height = tile_info[3], \
-                        byte_pos = tile_info[4], \
-                        byte_size = tile_info[5]
-                                          )
+        # open file
+        start_t = time.time()
+        dm_file = open(str_image_file_name, 'rb')
+        # parse info
+        company_name = dm_file.read(7)
+        print "Company name: "+company_name
+        isEncrypted = dm_file.read(1)
+        print "Is encrypted? "+isEncrypted
+        equipNo = dm_file.read(10)
+        print "Equipment NO: "+equipNo
+        timeinfo = dm_file.read(8)
+        print "Time stamp: "+timeinfo
+        total_width, = struct.unpack('i', dm_file.read(4))
+        print "Total width:", total_width
+        total_height, = struct.unpack('i', dm_file.read(4))
+        print "Total height:", total_height
+        header_size, = struct.unpack('i', dm_file.read(4))
+        print "Header size:", header_size
+        file_size, = struct.unpack('q', dm_file.read(8))
+        print "File size:", file_size
+        max_layer, = struct.unpack('h', dm_file.read(2))
+        print "max layer:", max_layer
+        umPerPixelX, = struct.unpack('d', dm_file.read(8))
+        print "umPerPixelX:", umPerPixelX
+        umPerPixelY, = struct.unpack('d', dm_file.read(8))
+        print "umPerPixelY:", umPerPixelY
+        objMag, = struct.unpack('i', dm_file.read(4))
+        print "objMag:", objMag
+        layer_info_map = {}
+        # layer info
+        for layer_index in range(MAX_LAYER_NUM):
+            i, = struct.unpack('h', dm_file.read(2))
+            col_num, = struct.unpack('i', dm_file.read(4))
+            row_num, = struct.unpack('i', dm_file.read(4))
+            byte_pos, = struct.unpack('i', dm_file.read(4))
+            if col_num >= 0 and row_num >= 0:
+                layer_info_map[i] = (i, col_num, row_num, byte_pos)
+                pass
+            print "layer_index %d, col_num %d, row_num %d, byte_pos %d" % (
+                    i, col_num, row_num, byte_pos)
+            pass
+        print "valid layers: ", layer_info_map.keys()
+        # tile info
+        label_layer_index, label_col_index, label_row_index, \
+            label_byte_pos, label_byte_size = readTile(dm_file)
+        print "label tile [%d, %d, %d, %d, %d]" % (
+                    label_layer_index, label_col_index,
+                    label_row_index, label_byte_pos,
+                    label_byte_size)
+        thumb_layer_index, thumb_col_index, thumb_row_index, \
+            thumb_byte_pos, thumb_byte_size = readTile(dm_file)
+        print "thumb tile [%d, %d, %d, %d, %d]" % (
+                    thumb_layer_index, thumb_col_index,
+                    thumb_row_index, thumb_byte_pos,
+                    thumb_byte_size)
+        keys_list = layer_info_map.keys()
+        keys_list.sort(reverse=True)
+        tile_info_map = {}
+        pyramid_level = 1
+        for layer_index in keys_list:
+            layer_info = layer_info_map[layer_index]
+            tile_num = (layer_info[1] + 1) * (layer_info[2] + 1)
+            dm_file.seek(layer_info[3])
+            print "******layer index %d with tile num %d and tile info \
+                    starting at %d" % (layer_index, tile_num, layer_info[3])
+            for i in range(tile_num):
+                i, col_index, row_index, byte_pos, byte_size = \
+                        readTile(dm_file)
+                tl_pos_x = TILE_WIDTH*pyramid_level*col_index
+                tl_pos_y = TILE_HEIGHT*pyramid_level*row_index
+                tile_item = DmPyramidTile(
+                        image_filepath = str_image_file_name,
+                        x_index = col_index, y_index = row_index,
+                        pyramid_level = pyramid_level,
+                        tl_pos_x = tl_pos_x,
+                        tl_pos_y = tl_pos_y,
+                        tile_width = TILE_WIDTH,
+                        tile_height = TILE_HEIGHT,
+                        byte_pos = byte_pos,
+                        byte_size = byte_size)
                 self._scene.addItem(tile_item)
-                self.dm_pixmap_dict[ \
-                            (mat_id, tile[0], tile[1], tile[2]) \
-                                    ] = tile_item
-                # update tile loading progress
-                tile_loading_progress.setLabelText( \
-                        'tile[%d,%d,%d,%d] is loaded.'%(mat_id, tile[0], \
-                                                     tile[1], tile[2]) )
-                tile_loading_progress.setValue( \
-                        tile_loading_progress.value()+1 )
+                self.dm_pixmap_dict[(
+                    col_index, row_index, pyramid_level)] = \
+                    tile_item
+                pass
+            pyramid_level *= 2
+            pass
+        #update objMag
+        self.updateBaseMagFactor(objMag)
+        # measure time elapsed
+        end_t = time.time()
+        elapsed_t = end_t - start_t
+        print "time elapsed %f sec" % elapsed_t
         pass
 
     def clearImageReviewTiles(self):
@@ -480,7 +425,7 @@ class dm_large_image_tile_viewer(QtGui.QFrame):
         self.image_view_2.signal_cursor_pos.connect(self.displayCursorPosOnScene)
         self.btn_zoomIn_2.clicked.connect(self.image_view_2.viewZoomIn)
         self.btn_zoomOut_2.clicked.connect(self.image_view_2.viewZoomOut)
-        self.btn_importTiles_2.clicked.connect(self.image_view_2.createImageReviewTiles)
+        self.btn_importTiles_2.clicked.connect(self.image_view_2.createImageReviewTilesFromDM)
         self.btn_removeTiles_2.clicked.connect(self.image_view_2.clearImageReviewTiles)
         # set layout
         hbox_layout = QtGui.QHBoxLayout()
